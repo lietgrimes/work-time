@@ -15,6 +15,7 @@ Subcommands:
   set-end             Set end time for a date.
   show                Show entries for a period.
   totals              Show totals for a period.
+  averages            Show average work hours for a period.
   export              Export entries to CSV for a period.
   view-db             Print DB path and basic stats.
 
@@ -41,6 +42,12 @@ Examples:
 
   # Totals for this year
   python work_time.py totals --range this-year
+  
+  # Averages for this month
+  python work_time.py averages --range this-month
+  
+  # Averages for a specific year
+  python work_time.py averages --range 2024
 """
 from __future__ import annotations
 
@@ -341,6 +348,129 @@ def cmd_totals(conn: sqlite3.Connection, args: argparse.Namespace):
             total += dur
     print(f"Range {start_day} to {end_day}: {minutes_to_hhmm(total)} ({total} minutes)")
 
+def cmd_averages(conn: sqlite3.Connection, args: argparse.Namespace):
+    d = to_local_date(None if args.date == "today" else args.date)
+    start_day, end_day = resolve_range(args.range, d)
+    entries = fetch_range_with_assumptions(conn, start_day, end_day)
+    
+    # Filter entries with valid durations
+    valid_entries = [e for e in entries if e.duration_minutes() is not None]
+    
+    if not valid_entries:
+        print(f"No valid entries found in range {start_day} to {end_day}")
+        return
+    
+    # Calculate totals
+    total_minutes = sum(e.duration_minutes() for e in valid_entries)
+    total_days = len(valid_entries)
+    
+    # Calculate averages
+    avg_minutes = total_minutes / total_days
+    avg_hours = avg_minutes / 60
+    
+    # Calculate workday averages (excluding weekends)
+    workday_entries = [e for e in valid_entries if is_workday(date.fromisoformat(e.day))]
+    workday_count = len(workday_entries)
+    
+    if workday_count > 0:
+        workday_avg_minutes = sum(e.duration_minutes() for e in workday_entries) / workday_count
+        workday_avg_hours = workday_avg_minutes / 60
+    else:
+        workday_avg_minutes = 0
+        workday_avg_hours = 0
+    
+    # Calculate weekly totals and averages
+    weeks = {}
+    for e in valid_entries:
+        week_start, _ = week_bounds(date.fromisoformat(e.day))
+        week_key = week_start.isoformat()
+        if week_key not in weeks:
+            weeks[week_key] = []
+        weeks[week_key].append(e)
+    
+    weekly_totals = []
+    weekly_averages = []
+    for week_start, week_entries in weeks.items():
+        week_total_minutes = sum(e.duration_minutes() for e in week_entries)
+        week_total_hours = week_total_minutes / 60
+        week_avg_minutes = week_total_minutes / len(week_entries)
+        week_avg_hours = week_avg_minutes / 60
+        
+        weekly_totals.append((week_start, week_total_minutes, week_total_hours))
+        weekly_averages.append((week_start, week_avg_minutes, week_avg_hours))
+    
+    weekly_totals.sort(key=lambda x: x[0])
+    weekly_averages.sort(key=lambda x: x[0])
+    
+    # Calculate monthly averages
+    months = {}
+    for e in valid_entries:
+        month_key = e.day[:7]  # YYYY-MM
+        if month_key not in months:
+            months[month_key] = []
+        months[month_key].append(e)
+    
+    monthly_averages = []
+    for month_key, month_entries in months.items():
+        month_total = sum(e.duration_minutes() for e in month_entries)
+        month_avg = month_total / len(month_entries)
+        monthly_averages.append((month_key, month_avg))
+    
+    monthly_averages.sort(key=lambda x: x[0])
+    
+    # Display results
+    print(f"=== Averages for {start_day} to {end_day} ===")
+    print(f"Total entries: {total_days}")
+    print(f"Total time: {minutes_to_hhmm(total_minutes)} ({total_minutes} minutes)")
+    print(f"Overall average: {minutes_to_hhmm(int(avg_minutes))} ({avg_hours:.2f} hours)")
+    print(f"Workday average: {minutes_to_hhmm(int(workday_avg_minutes))} ({workday_avg_hours:.2f} hours)")
+    
+    # Show weekly totals (this is the key for 40-hour week proof)
+    if len(weekly_totals) > 0:
+        print(f"\n=== Weekly Totals (40-hour target) ===")
+        target_minutes = 40 * 60  # 40 hours in minutes
+        target_hours = 40.0
+        
+        for week_start, week_total_minutes, week_total_hours in weekly_totals:
+            status = "✅" if week_total_hours >= target_hours else "❌"
+            shortfall = target_hours - week_total_hours if week_total_hours < target_hours else 0
+            shortfall_str = f" (-{shortfall:.1f}h)" if shortfall > 0 else ""
+            
+            print(f"  {week_start} (week of): {minutes_to_hhmm(int(week_total_minutes))} ({week_total_hours:.1f}h) {status}{shortfall_str}")
+        
+        # Summary of 40-hour weeks
+        weeks_meeting_target = sum(1 for _, _, hours in weekly_totals if hours >= target_hours)
+        total_weeks = len(weekly_totals)
+        print(f"\n  Summary: {weeks_meeting_target}/{total_weeks} weeks met 40-hour target ({weeks_meeting_target/total_weeks*100:.0f}%)")
+        
+        # Overall weekly average for the entire period
+        if total_weeks > 0:
+            total_weekly_hours = sum(hours for _, _, hours in weekly_totals)
+            overall_weekly_avg = total_weekly_hours / total_weeks
+            print(f"  Overall weekly average: {overall_weekly_avg:.1f} hours/week")
+    
+    if len(weekly_averages) > 1:
+        print(f"\n=== Daily Averages by Week ===")
+        for week_start, week_avg_minutes, week_avg_hours in weekly_averages:
+            print(f"  {week_start} (week of): {minutes_to_hhmm(int(week_avg_minutes))} ({week_avg_hours:.2f} hours/day)")
+    
+    if len(monthly_averages) > 1:
+        print(f"\n=== Monthly Averages ===")
+        for month_key, month_avg in monthly_averages:
+            print(f"  {month_key}: {minutes_to_hhmm(int(month_avg))} ({month_avg/60:.2f} hours)")
+    
+    # Show distribution if there are enough entries
+    if total_days >= 5:
+        durations = [e.duration_minutes() for e in valid_entries]
+        durations.sort()
+        median = durations[total_days // 2]
+        min_dur = min(durations)
+        max_dur = max(durations)
+        print(f"\n=== Distribution ===")
+        print(f"  Min: {minutes_to_hhmm(min_dur)} ({min_dur/60:.2f} hours)")
+        print(f"  Median: {minutes_to_hhmm(median)} ({median/60:.2f} hours)")
+        print(f"  Max: {minutes_to_hhmm(max_dur)} ({max_dur/60:.2f} hours)")
+
 def cmd_export(conn: sqlite3.Connection, args: argparse.Namespace):
     d = to_local_date(None if args.date == "today" else args.date)
     start_day, end_day = resolve_range(args.range, d)
@@ -415,6 +545,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--date", help="Anchor date for relative ranges (default: today)")
     sp.set_defaults(func=cmd_totals)
 
+    # averages
+    sp = sub.add_parser("averages", help="Show average work hours for a range.")
+    sp.add_argument("--range", default="this-month", help="today|this-week|this-month|this-year|last-month|YYYY-MM|YYYY-MM-DD:YYYY-MM-DD")
+    sp.add_argument("--date", help="Anchor date for relative ranges (default: today)")
+    sp.set_defaults(func=cmd_averages)
+
     # export
     sp = sub.add_parser("export", help="Export entries to CSV for a range.")
     sp.add_argument("--range", default="this-month", help="today|this-week|this-month|this-year|last-month|YYYY-MM|YYYY-MM-DD:YYYY-MM-DD")
@@ -435,7 +571,7 @@ def main():
     # If no subcommand (or only global flags like --db), default to 'end'.
     # Preserve top-level help (-h/--help) behavior.
     if not any(flag in argv for flag in ("-h", "--help")):
-        subcommands = {"end", "set-start", "set-end", "show", "totals", "export", "view-db"}
+        subcommands = {"end", "set-start", "set-end", "show", "totals", "averages", "export", "view-db"}
         if not argv or argv[0] not in subcommands:
             argv = ["end"] + argv
     args = parser.parse_args(argv)
