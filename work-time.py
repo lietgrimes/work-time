@@ -687,7 +687,7 @@ def main():
     if not any(flag in argv for flag in ("-h", "--help")):
         subcommands = {"end", "set-start", "set-end", "show", "totals", "averages", "export", "view-db", "edit"}
         if not argv or argv[0] not in subcommands:
-            argv = ["end"] + argv
+            argv = ["show"] + argv
     args = parser.parse_args(argv)
     conn = get_conn(args.db)
     try:
