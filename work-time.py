@@ -18,6 +18,7 @@ Subcommands:
   averages            Show average work hours for a period.
   export              Export entries to CSV for a period.
   view-db             Print DB path and basic stats.
+  edit                Visually edit entries for a period (TUI).
 
 Examples:
   # End today's workday now (start=07:00 unless already set)
@@ -38,16 +39,10 @@ Examples:
   python work_time.py totals --range this-month
 
   # Export last month to CSV
-  python work_time.py export --range last-month --out ~/Desktop/work_hours_last_month.csv
+  python work_time.py export --range last-month --out my.csv
 
-  # Totals for this year
-  python work_time.py totals --range this-year
-  
-  # Averages for this month
-  python work_time.py averages --range this-month
-  
-  # Averages for a specific year
-  python work_time.py averages --range 2024
+  # Visually edit this week's entries in a table
+  python work_time.py edit --range this-week
 """
 from __future__ import annotations
 
@@ -239,12 +234,21 @@ def resolve_range(range_str: str|None, d: date) -> Tuple[date,date]:
         return d, d
     if range_str == "this-week":
         return week_bounds(d)
+    if range_str == "last-week":
+        start, _ = week_bounds(d)
+        last_week_end = start - timedelta(days=1)
+        last_week_start = last_week_end - timedelta(days=6)
+        return last_week_start, last_week_end
     if range_str == "this-month":
         return month_bounds(d)
-    if range_str == "this-year":
-        return year_bounds(d)
     if range_str == "last-month":
         return last_month_bounds(d)
+    if range_str == "this-year":
+        return year_bounds(d)
+    if range_str == "last-year":
+        first_this, _ = year_bounds(d)
+        last_of_prev = first_this - timedelta(days=1)
+        return year_bounds(last_of_prev)
     if ":" in range_str:
         a, b = range_str.split(":", 1)
         return date.fromisoformat(a), date.fromisoformat(b)
@@ -510,6 +514,107 @@ def cmd_view_db(conn: sqlite3.Connection, args: argparse.Namespace):
     print(f"DB: {conn.execute('PRAGMA database_list').fetchone()[2]}")
     print(f"Entries: {count}, range: {min_day} .. {max_day}")
 
+def cmd_edit(conn: sqlite3.Connection, args: argparse.Namespace):
+    import curses
+    d = to_local_date(None if args.date == "today" else args.date)
+    start_day, end_day = resolve_range(args.range, d)
+    entries = fetch_range_with_assumptions(conn, start_day, end_day)
+    rows = make_rows(entries)
+    if not rows:
+        print("No entries.")
+        return
+    headers = ["date", "start_local", "end_local"]
+    col_widths = [max(len(h), max(len(str(r[h])) for r in rows)) for h in headers]
+    n_rows = len(rows)
+    n_cols = len(headers)
+    cursor_row, cursor_col = 0, 1  # default to first editable cell (start_local)
+    message = ""
+    edited = set()
+    def tui(stdscr):
+        nonlocal cursor_row, cursor_col, message
+        curses.curs_set(0)
+        while True:
+            stdscr.clear()
+            stdscr.addstr(0, 0, "Edit Mode: Arrow keys to move, e/Enter to edit, s to save, q to quit")
+            if message:
+                stdscr.addstr(1, 0, message)
+            # Print headers
+            x = 0
+            for ci, h in enumerate(headers):
+                stdscr.addstr(3, x, h.ljust(col_widths[ci]))
+                x += col_widths[ci] + 2
+            # Print rows
+            for ri, row in enumerate(rows):
+                x = 0
+                for ci, h in enumerate(headers):
+                    cell = str(row[h]).ljust(col_widths[ci])
+                    if ri == cursor_row and ci == cursor_col:
+                        stdscr.attron(curses.A_REVERSE)
+                        stdscr.addstr(4+ri, x, cell)
+                        stdscr.attroff(curses.A_REVERSE)
+                    else:
+                        stdscr.addstr(4+ri, x, cell)
+                    x += col_widths[ci] + 2
+            stdscr.refresh()
+            key = stdscr.getch()
+            message = ""
+            if key == ord('q'):
+                break
+            elif key == ord('s'):
+                # Save all edited rows
+                for ri, row in enumerate(rows):
+                    if ri in edited:
+                        day = row['date']
+                        if isinstance(day, str):
+                            from datetime import date
+                            day = date.fromisoformat(day)
+                        try:
+                            s = parse_hhmm(row['start_local'][-5:])
+                            s_local = local_dt_from_date_and_hhmm(day, s)
+                            s_utc = utc_iso(s_local)
+                        except Exception:
+                            s_utc = None
+                        try:
+                            e = parse_hhmm(row['end_local'][-5:]) if row['end_local'].strip() else None
+                            e_local = local_dt_from_date_and_hhmm(day, e) if e else None
+                            e_utc = utc_iso(e_local) if e_local else None
+                        except Exception:
+                            e_utc = None
+                        upsert_entry(conn, day, s_utc, e_utc, LOCAL_TZ_NAME_DEFAULT, row.get('notes'))
+                message = f"Saved {len(edited)} row(s)."
+                break
+            elif key == curses.KEY_UP:
+                cursor_row = max(0, cursor_row - 1)
+            elif key == curses.KEY_DOWN:
+                cursor_row = min(n_rows - 1, cursor_row + 1)
+            elif key == curses.KEY_LEFT:
+                cursor_col = max(1, cursor_col - 1)
+            elif key == curses.KEY_RIGHT:
+                cursor_col = min(n_cols - 1, cursor_col + 1)
+            elif key in (ord('e'), 10, 13):
+                # Only allow editing start/end
+                if cursor_col in (1, 2):
+                    max_y, _ = stdscr.getmaxyx()
+                    prompt_line = max_y - 2
+                    stdscr.move(prompt_line, 0)
+                    stdscr.clrtoeol()
+                    stdscr.addstr(prompt_line, 0, f"Enter new time for {headers[cursor_col]} (HH:MM): ")
+                    stdscr.refresh()
+                    curses.echo()
+                    new_val = stdscr.getstr(prompt_line, len(f"Enter new time for {headers[cursor_col]} (HH:MM): ")).decode().strip()
+                    curses.noecho()
+                    try:
+                        if new_val:
+                            parse_hhmm(new_val)
+                            rows[cursor_row][headers[cursor_col]] = rows[cursor_row][headers[cursor_col]][:11] + new_val
+                            edited.add(cursor_row)
+                            message = f"Edited {headers[cursor_col]} for row {cursor_row+1}."
+                        else:
+                            message = "Input cancelled."
+                    except Exception:
+                        message = "Invalid time format. Use HH:MM."
+    curses.wrapper(tui)
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Tiny daily time tracker.")
     p.add_argument("--db", default=DEFAULT_DB_PATH, help="SQLite DB path (default: ~/OneDrive/Work/time_log.db or TIMELOG_DB)")
@@ -565,6 +670,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("view-db", help="Show DB path and basic stats.")
     sp.set_defaults(func=cmd_view_db)
 
+    # edit
+    sp = sub.add_parser("edit", help="Visually edit entries for a range (TUI).")
+    sp.add_argument("--range", default="this-week", help="today|this-week|last-week|this-month|last-month|this-year|last-year|YYYY-MM|YYYY-MM-DD:YYYY-MM-DD")
+    sp.add_argument("--date", help="Anchor date for relative ranges (default: today)")
+    sp.set_defaults(func=cmd_edit)
+
     return p
 
 def main():
@@ -574,7 +685,7 @@ def main():
     # If no subcommand (or only global flags like --db), default to 'end'.
     # Preserve top-level help (-h/--help) behavior.
     if not any(flag in argv for flag in ("-h", "--help")):
-        subcommands = {"end", "set-start", "set-end", "show", "totals", "averages", "export", "view-db"}
+        subcommands = {"end", "set-start", "set-end", "show", "totals", "averages", "export", "view-db", "edit"}
         if not argv or argv[0] not in subcommands:
             argv = ["end"] + argv
     args = parser.parse_args(argv)
