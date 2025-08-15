@@ -198,10 +198,13 @@ def build_assumed_entry(day: date) -> Entry:
 def fetch_range_with_assumptions(conn: sqlite3.Connection, start_day: date, end_day: date) -> List[Entry]:
     entries = fetch_range(conn, start_day, end_day)
     existing_days = {e.day for e in entries}
+    today = today_local()
     cursor_day = start_day
     while cursor_day <= end_day:
         if is_workday(cursor_day) and cursor_day.isoformat() not in existing_days:
-            entries.append(build_assumed_entry(cursor_day))
+            # Only assume 8-hour days for past dates, not future dates
+            if cursor_day < today:
+                entries.append(build_assumed_entry(cursor_day))
         cursor_day += timedelta(days=1)
     entries.sort(key=lambda e: e.day)
     return entries
