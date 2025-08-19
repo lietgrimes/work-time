@@ -11,6 +11,7 @@ Override via --db PATH or TIMELOG_DB env var.
 
 Subcommands:
   end                 End today's entry (or a given date) starting at 7:00.
+  start               Start today's entry (or a given date) with start=now.
   set-start           Set start time for a date.
   set-end             Set end time for a date.
   show                Show entries for a period.
@@ -24,8 +25,14 @@ Examples:
   # End today's workday now (start=07:00 unless already set)
   python work_time.py end
 
+  # Start today's workday now (end=None unless already set)
+  python work_time.py start
+
   # End for a specific date (e.g., backfill yesterday)
   python work_time.py end --date 2025-08-13
+
+  # Start for a specific date (e.g., backfill yesterday)
+  python work_time.py start --date 2025-08-13
 
   # Use a custom default start (e.g., 06:30) for today only
   python work_time.py end --start 06:30
@@ -284,6 +291,19 @@ def cmd_end(conn: sqlite3.Connection, args: argparse.Namespace):
     upsert_entry(conn, d, start_utc, end_utc, LOCAL_TZ_NAME_DEFAULT, args.notes)
     start_local_for_print = datetime.fromisoformat(start_utc.replace("Z", "")).replace(tzinfo=ZoneInfo("UTC")).astimezone(LOCAL_TZ)
     print(f"Ended {d.isoformat()} at {end_local.strftime('%H:%M')} (start {start_local_for_print.strftime('%H:%M')})")
+
+def cmd_start(conn: sqlite3.Connection, args: argparse.Namespace):
+    d = to_local_date(args.date)
+    start_local = datetime.now(LOCAL_TZ)
+    start_utc = utc_iso(start_local)
+    existing = fetch_entry(conn, d)
+    if existing and existing.end_utc:
+        end_utc = existing.end_utc
+    else:
+        end_utc = None
+    upsert_entry(conn, d, start_utc, end_utc, LOCAL_TZ_NAME_DEFAULT, args.notes)
+    start_local_for_print = datetime.fromisoformat(start_utc.replace("Z", "")).replace(tzinfo=ZoneInfo("UTC")).astimezone(LOCAL_TZ)
+    print(f"Started {d.isoformat()} at {start_local_for_print.strftime('%H:%M')}")
 
 def cmd_set_start(conn: sqlite3.Connection, args: argparse.Namespace):
     d = to_local_date(args.date)
@@ -627,6 +647,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--notes", help="Optional notes")
     sp.set_defaults(func=cmd_end)
 
+    # start
+    sp = sub.add_parser("start", help="Start today's entry (or a given date) with start=now.")
+    sp.add_argument("--date", help="Local date YYYY-MM-DD (default: today)")
+    sp.add_argument("--notes", help="Optional notes")
+    sp.set_defaults(func=cmd_start)
+
     # set-start
     sp = sub.add_parser("set-start", help="Set start time for a date.")
     sp.add_argument("--date", help="Local date YYYY-MM-DD (default: today)")
@@ -685,7 +711,7 @@ def main():
     # If no subcommand (or only global flags like --db), default to 'end'.
     # Preserve top-level help (-h/--help) behavior.
     if not any(flag in argv for flag in ("-h", "--help")):
-        subcommands = {"end", "set-start", "set-end", "show", "totals", "averages", "export", "view-db", "edit"}
+        subcommands = {"end", "start", "set-start", "set-end", "show", "totals", "averages", "export", "view-db", "edit"}
         if not argv or argv[0] not in subcommands:
             argv = ["show"] + argv
     args = parser.parse_args(argv)
