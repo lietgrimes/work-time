@@ -407,20 +407,48 @@ def cmd_averages(conn: sqlite3.Connection, args: argparse.Namespace):
         workday_avg_hours = 0
     
     # Calculate weekly totals and averages
-    weeks = {}
+    weeks: dict[str, List[Entry]] = {}
+    week_days: dict[str, set[str]] = {}
     for e in valid_entries:
         week_start, _ = week_bounds(date.fromisoformat(e.day))
         week_key = week_start.isoformat()
         if week_key not in weeks:
             weeks[week_key] = []
+            week_days[week_key] = set()
         weeks[week_key].append(e)
-    
+        week_days[week_key].add(e.day)
+
+    if weeks:
+        week_start_dates = [date.fromisoformat(k) for k in weeks.keys()]
+        extended_start = min(week_start_dates)
+        extended_end = max(week_start_dates) + timedelta(days=6)
+        extra_entries = fetch_range(conn, extended_start, extended_end)
+        for e in extra_entries:
+            dur = e.duration_minutes()
+            if dur is None:
+                continue
+            week_start, _ = week_bounds(date.fromisoformat(e.day))
+            week_key = week_start.isoformat()
+            if week_key not in weeks:
+                continue
+            if e.day in week_days[week_key]:
+                continue
+            weeks[week_key].append(e)
+            week_days[week_key].add(e.day)
+
     weekly_totals = []
     weekly_averages = []
     for week_start, week_entries in weeks.items():
-        week_total_minutes = sum(e.duration_minutes() for e in week_entries)
+        durations = []
+        for entry in week_entries:
+            dur = entry.duration_minutes()
+            if dur is not None:
+                durations.append(dur)
+        if not durations:
+            continue
+        week_total_minutes = sum(durations)
         week_total_hours = week_total_minutes / 60
-        week_avg_minutes = week_total_minutes / len(week_entries)
+        week_avg_minutes = week_total_minutes / len(durations)
         week_avg_hours = week_avg_minutes / 60
         
         weekly_totals.append((week_start, week_total_minutes, week_total_hours))
