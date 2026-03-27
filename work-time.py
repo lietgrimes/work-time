@@ -779,12 +779,25 @@ def main():
     parser = build_parser()
     import sys
     argv = sys.argv[1:]
-    # If no subcommand (or only global flags like --db), default to 'end'.
+    # If no subcommand is present, default to 'show' while preserving global flags.
     # Preserve top-level help (-h/--help) behavior.
     if not any(flag in argv for flag in ("-h", "--help")):
         subcommands = {"end", "start", "set-start", "set-end", "show", "totals", "averages", "export", "view-db", "edit"}
-        if not argv or argv[0] not in subcommands:
-            argv = ["show"] + argv
+        if not any(arg in subcommands for arg in argv):
+            insert_at = 0
+            while insert_at < len(argv):
+                arg = argv[insert_at]
+                if arg == "--db":
+                    insert_at += 2
+                    continue
+                if arg.startswith("--db="):
+                    insert_at += 1
+                    continue
+                if arg.startswith("-"):
+                    insert_at += 1
+                    continue
+                break
+            argv = argv[:insert_at] + ["show"] + argv[insert_at:]
     args = parser.parse_args(argv)
     conn = get_conn(args.db)
     try:
