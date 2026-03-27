@@ -33,7 +33,7 @@ Tip: Make it executable and run directly:
 ## Commands
 
 - `end`: End a day at “now”; keeps existing start or uses default start.
-  - Examples: `python work-time.py end`, `python work-time.py end --date 2025-08-13`, `python work-time.py end --start 06:30`
+  - Examples: `python work-time.py end`, `python work-time.py end --date 2025-08-13`, `python work-time.py end --start 06:30`, `python work-time.py end --time 6pm`
 - `start`: Start a day at “now”, or pass `--time` with `HH:MM`, `HHMM`, `6a`, or `6am`.
   - Example: `python work-time.py start --date 2025-08-13`
 - `set-start`: Set explicit start time.

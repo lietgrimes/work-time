@@ -316,7 +316,7 @@ def minutes_to_hhmm(total_minutes: int) -> str:
 def cmd_end(conn: sqlite3.Connection, args: argparse.Namespace):
     d = to_local_date(args.date)
     # Determine start
-    default_start = parse_hhmm(args.start) if args.start else parse_hhmm(DEFAULT_START_STR)
+    default_start = args.start if args.start else parse_hhmm(DEFAULT_START_STR)
     # If entry exists, keep its start if already set; otherwise set to default
     existing = fetch_entry(conn, d)
     if existing and existing.start_utc:
@@ -325,7 +325,10 @@ def cmd_end(conn: sqlite3.Connection, args: argparse.Namespace):
     else:
         start_local = local_dt_from_date_and_hhmm(d, default_start)
         start_utc = utc_iso(start_local)
-    end_local = datetime.now(LOCAL_TZ)
+    if args.time:
+        end_local = local_dt_from_date_and_hhmm(d, args.time)
+    else:
+        end_local = datetime.now(LOCAL_TZ)
     end_utc = utc_iso(end_local)
     upsert_entry(conn, d, start_utc, end_utc, LOCAL_TZ_NAME_DEFAULT, args.notes)
     start_local_for_print = datetime.fromisoformat(start_utc.replace("Z", "")).replace(tzinfo=ZoneInfo("UTC")).astimezone(LOCAL_TZ)
@@ -717,7 +720,8 @@ def build_parser() -> argparse.ArgumentParser:
     # end
     sp = sub.add_parser("end", help="End today's entry (start=07:00 unless set).")
     sp.add_argument("--date", help="Local date YYYY-MM-DD (default: today)")
-    sp.add_argument("--start", help="Override default start HH:MM for this run")
+    sp.add_argument("--start", type=parse_hhmm, help="Override default start time like HH:MM, HHMM, 6a, or 6am")
+    sp.add_argument("--time", type=parse_hhmm, help="Optional end time like HH:MM, HHMM, 6a, or 6am")
     sp.add_argument("--notes", help="Optional notes")
     sp.set_defaults(func=cmd_end)
 
