@@ -686,23 +686,27 @@ def cmd_edit(conn: sqlite3.Connection, args: argparse.Namespace):
                 if cursor_col in (1, 2):
                     max_y, _ = stdscr.getmaxyx()
                     prompt_line = max_y - 2
+                    prompt = f"Enter new time for {headers[cursor_col]} (HH:MM, HHMM, 6a, 6am): "
                     stdscr.move(prompt_line, 0)
                     stdscr.clrtoeol()
-                    stdscr.addstr(prompt_line, 0, f"Enter new time for {headers[cursor_col]} (HH:MM): ")
+                    stdscr.addstr(prompt_line, 0, prompt)
                     stdscr.refresh()
                     curses.echo()
-                    new_val = stdscr.getstr(prompt_line, len(f"Enter new time for {headers[cursor_col]} (HH:MM): ")).decode().strip()
+                    new_val = stdscr.getstr(prompt_line, len(prompt)).decode().strip()
                     curses.noecho()
                     try:
                         if new_val:
-                            parse_hhmm(new_val)
-                            rows[cursor_row][headers[cursor_col]] = rows[cursor_row][headers[cursor_col]][:11] + new_val
+                            parsed_time = parse_hhmm(new_val)
+                            rows[cursor_row][headers[cursor_col]] = (
+                                rows[cursor_row][headers[cursor_col]][:11]
+                                + parsed_time.strftime("%H:%M")
+                            )
                             edited.add(cursor_row)
                             message = f"Edited {headers[cursor_col]} for row {cursor_row+1}."
                         else:
                             message = "Input cancelled."
                     except Exception:
-                        message = "Invalid time format. Use HH:MM."
+                        message = "Invalid time format. Use HH:MM, HHMM, 6a, or 6am."
     curses.wrapper(tui)
 
 def build_parser() -> argparse.ArgumentParser:

@@ -88,11 +88,11 @@ Output path behavior:
 `python work-time.py edit --range this-week`
 
 - Arrow keys: move cursor
-- `e` or Enter: edit time in the selected cell (HH:MM)
+- `e` or Enter: edit time in the selected cell (`HH:MM`, `HHMM`, `6a`, `6am`)
 - `s`: save changed rows
 - `q`: quit
 
-Only `start_local` and `end_local` are editable. Times are validated as `HH:MM`.
+Only `start_local` and `end_local` are editable. Times are validated using the same formats as `start --time`.
 
 ## Configuration
 
