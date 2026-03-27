@@ -57,6 +57,7 @@ import argparse
 import csv
 import dataclasses
 import os
+import re
 import sqlite3
 from datetime import datetime, date, time, timedelta
 from typing import Optional, Tuple, List
@@ -112,11 +113,49 @@ class Entry:
 # ---------- Utilities ----------
 
 def parse_hhmm(s: str) -> time:
-    try:
-        hh, mm = s.strip().split(":")
-        return time(int(hh), int(mm))
-    except Exception:
-        raise argparse.ArgumentTypeError(f"Time '{s}' must be HH:MM (24-hour).")
+    raw = s.strip().lower()
+
+    m = re.fullmatch(r"(\d{1,2})(?::?(\d{2}))?\s*([ap])m?", raw)
+    if m:
+        hour = int(m.group(1))
+        minute = int(m.group(2) or "00")
+        suffix = m.group(3)
+        if not (1 <= hour <= 12 and 0 <= minute <= 59):
+            raise argparse.ArgumentTypeError(
+                f"Time '{s}' must be like HH:MM, HHMM, 6a, or 6am."
+            )
+        if hour == 12:
+            hour = 0
+        if suffix == "p":
+            hour += 12
+        return time(hour, minute)
+
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})", raw)
+    if m:
+        hour = int(m.group(1))
+        minute = int(m.group(2))
+        try:
+            return time(hour, minute)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"Time '{s}' must be like HH:MM, HHMM, 6a, or 6am."
+            ) from None
+
+    m = re.fullmatch(r"(\d{3,4})", raw)
+    if m:
+        digits = m.group(1)
+        hour = int(digits[:-2])
+        minute = int(digits[-2:])
+        try:
+            return time(hour, minute)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"Time '{s}' must be like HH:MM, HHMM, 6a, or 6am."
+            ) from None
+
+    raise argparse.ArgumentTypeError(
+        f"Time '{s}' must be like HH:MM, HHMM, 6a, or 6am."
+    )
 
 def today_local() -> date:
     return datetime.now(LOCAL_TZ).date()
@@ -294,7 +333,10 @@ def cmd_end(conn: sqlite3.Connection, args: argparse.Namespace):
 
 def cmd_start(conn: sqlite3.Connection, args: argparse.Namespace):
     d = to_local_date(args.date)
-    start_local = datetime.now(LOCAL_TZ)
+    if args.time:
+        start_local = local_dt_from_date_and_hhmm(d, args.time)
+    else:
+        start_local = datetime.now(LOCAL_TZ)
     start_utc = utc_iso(start_local)
     existing = fetch_entry(conn, d)
     if existing and existing.end_utc:
@@ -676,8 +718,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_end)
 
     # start
-    sp = sub.add_parser("start", help="Start today's entry (or a given date) with start=now.")
+    sp = sub.add_parser("start", help="Start today's entry now or at a specified time.")
     sp.add_argument("--date", help="Local date YYYY-MM-DD (default: today)")
+    sp.add_argument("--time", type=parse_hhmm, help="Optional start time like HH:MM, HHMM, 6a, or 6am")
     sp.add_argument("--notes", help="Optional notes")
     sp.set_defaults(func=cmd_start)
 

@@ -20,6 +20,11 @@ Use cases:
   - `python work-time.py end`
 - Start today now:
   - `python work-time.py start`
+- Start today at a specific time:
+  - `python work-time.py start --time 06:00`
+  - `python work-time.py start --time 600`
+  - `python work-time.py start --time 6a`
+  - `python work-time.py start --time 6am`
 
 Tip: Make it executable and run directly:
 - `chmod +x work-time.py`
@@ -29,7 +34,7 @@ Tip: Make it executable and run directly:
 
 - `end`: End a day at “now”; keeps existing start or uses default start.
   - Examples: `python work-time.py end`, `python work-time.py end --date 2025-08-13`, `python work-time.py end --start 06:30`
-- `start`: Start a day at “now”.
+- `start`: Start a day at “now”, or pass `--time` with `HH:MM`, `HHMM`, `6a`, or `6am`.
   - Example: `python work-time.py start --date 2025-08-13`
 - `set-start`: Set explicit start time.
   - Example: `python work-time.py set-start --date 2025-08-13 --time 06:45`
